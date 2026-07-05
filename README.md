@@ -1,8 +1,10 @@
 # Poovaragavan-CRMS
 📋 Project Overview
+
 The Crime Report Management System (CRMS) is a full-stack web application built at VSB Engineering College, Karur (2025-2026). It digitizes the crime reporting process, allowing citizens to file reports online, track case progress in real-time, and receive automatic notifications — while giving law enforcement officers and administrators powerful case management and analytics tools.
 
 ✅ The Solution
+
 The system replaces the entire manual workflow with a secure digital platform featuring three user roles:
 For Citizens:
  
@@ -35,6 +37,7 @@ View dashboards with crime trends, resolution rates, and monthly comparisons
 Access complete audit trails of all system activities
 
 🏗️ Architecture & Technology
+
 Component	Technology	Why It Was Chosen	
 Frontend	HTML5, CSS3, JavaScript	Lightweight, fast loading, no build step needed, works on all devices	
 Backend	Node.js + Express.js	Same language as frontend, handles many concurrent requests efficiently	
