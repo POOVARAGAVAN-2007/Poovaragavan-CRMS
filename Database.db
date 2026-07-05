@@ -1,0 +1,239 @@
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const bcrypt = require('bcryptjs');
+require('dotenv').config();
+
+const DB_PATH = process.env.DB_PATH || './crime_report.db';
+
+const db = new sqlite3.Database(DB_PATH, (err) => {
+  if (err) {
+    console.error('Error opening database:', err.message);
+  } else {
+    console.log('Connected to SQLite database.');
+    initDatabase();
+  }
+});
+
+function initDatabase() {
+  db.serialize(() => {
+    // Users table
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+      user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('ADMIN', 'OFFICER', 'CITIZEN')),
+      phone TEXT,
+      address TEXT,
+      full_name TEXT,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Crime Reports table
+    db.run(`CREATE TABLE IF NOT EXISTS crime_reports (
+      report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      crime_type TEXT NOT NULL,
+      location TEXT NOT NULL,
+      latitude REAL,
+      longitude REAL,
+      incident_date TEXT,
+      status TEXT DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'INVESTIGATING', 'RESOLVED', 'CLOSED')),
+      priority TEXT DEFAULT 'MEDIUM' CHECK(priority IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      assigned_officer_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_officer_id) REFERENCES users(user_id) ON DELETE SET NULL
+    )`);
+
+    // Case Updates table
+    db.run(`CREATE TABLE IF NOT EXISTS case_updates (
+      update_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_id INTEGER NOT NULL,
+      officer_id INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('PENDING', 'INVESTIGATING', 'RESOLVED', 'CLOSED')),
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (report_id) REFERENCES crime_reports(report_id) ON DELETE CASCADE,
+      FOREIGN KEY (officer_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )`);
+
+    // Suspects table
+    db.run(`CREATE TABLE IF NOT EXISTS suspects (
+      suspect_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      age INTEGER,
+      gender TEXT CHECK(gender IN ('MALE', 'FEMALE', 'OTHER')),
+      description TEXT,
+      address TEXT,
+      status TEXT DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'ARRESTED', 'RELEASED', 'WANTED')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (report_id) REFERENCES crime_reports(report_id) ON DELETE CASCADE
+    )`);
+
+    // Evidence table
+    db.run(`CREATE TABLE IF NOT EXISTS evidence (
+      evidence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_id INTEGER NOT NULL,
+      file_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_type TEXT,
+      description TEXT,
+      uploaded_by INTEGER NOT NULL,
+      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (report_id) REFERENCES crime_reports(report_id) ON DELETE CASCADE,
+      FOREIGN KEY (uploaded_by) REFERENCES users(user_id) ON DELETE CASCADE
+    )`);
+
+    // Notifications table
+    db.run(`CREATE TABLE IF NOT EXISTS notifications (
+      notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      type TEXT DEFAULT 'GENERAL' CHECK(type IN ('STATUS_UPDATE', 'ASSIGNMENT', 'GENERAL')),
+      is_read INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )`);
+
+    // Audit Logs table
+    db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+      log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER,
+      details TEXT,
+      ip_address TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL
+    )`);
+
+    console.log('All tables created successfully.');
+    seedDatabase();
+  });
+}
+
+function seedDatabase() {
+  const adminHash = bcrypt.hashSync('admin123', 10);
+  const officerHash = bcrypt.hashSync('officer123', 10);
+  const citizenHash = bcrypt.hashSync('citizen123', 10);
+
+  const users = [
+    ['admin', 'admin@crms.gov', adminHash, 'ADMIN', '9999999999', 'Police HQ, Karur', 'System Administrator'],
+    ['officer1', 'officer1@crms.gov', officerHash, 'OFFICER', '8888888888', 'Station Road, Karur', 'Inspector Kumar'],
+    ['officer2', 'officer2@crms.gov', officerHash, 'OFFICER', '7777777777', 'Station Road, Karur', 'Sub-Inspector Ravi'],
+    ['john_doe', 'john@example.com', citizenHash, 'CITIZEN', '9876543210', 'Anna Nagar, Karur', 'John Doe'],
+    ['priya_sharma', 'priya@example.com', citizenHash, 'CITIZEN', '9876543211', 'Gandhi Road, Karur', 'Priya Sharma'],
+    ['rahul_kumar', 'rahul@example.com', citizenHash, 'CITIZEN', '9876543212', 'College Road, Karur', 'Rahul Kumar']
+  ];
+
+  const insertUser = db.prepare(`INSERT OR IGNORE INTO users 
+    (username, email, password_hash, role, phone, address, full_name) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+
+  users.forEach(u => insertUser.run(u));
+  insertUser.finalize();
+
+  // Seed reports
+  const reports = [
+    [4, 'Theft at Main Street Market', 'My bicycle was stolen from the parking area near the market entrance around 6 PM. CCTV footage may be available.', 'THEFT', 'Main Street, Karur', 'PENDING', 'HIGH', 2],
+    [4, 'Mobile Snatching near Bus Stand', 'Two individuals on a motorcycle snatched my phone while I was waiting at the bus stand.', 'THEFT', 'Bus Stand, Karur', 'INVESTIGATING', 'MEDIUM', 2],
+    [4, 'Vandalism at Public Park', 'Public benches and flower pots were damaged by unknown individuals last night.', 'VANDALISM', 'Gandhi Park, Karur', 'RESOLVED', 'LOW', 2],
+    [5, 'Domestic Disturbance', 'Loud arguments and physical altercation heard from neighboring apartment.', 'DOMESTIC_VIOLENCE', 'Anna Nagar, Karur', 'INVESTIGATING', 'CRITICAL', 3],
+    [5, 'Shop Burglary', 'Break-in at electronics shop. Cash register and mobile phones stolen.', 'THEFT', 'Bazaar Road, Karur', 'CLOSED', 'HIGH', 2],
+    [6, 'Assault at College Road', 'Physical assault reported near college gate during evening hours.', 'ASSAULT', 'College Road, Karur', 'RESOLVED', 'HIGH', 3],
+    [6, 'Online Fraud - Fake Job', 'Received fake job offer email asking for payment for registration. Lost Rs. 5000.', 'FRAUD', 'Online / Remote', 'INVESTIGATING', 'MEDIUM', 2],
+    [4, 'Car Break-in', 'My car window was smashed and laptop bag stolen from back seat.', 'THEFT', 'Railway Station, Karur', 'PENDING', 'HIGH', null]
+  ];
+
+  const insertReport = db.prepare(`INSERT OR IGNORE INTO crime_reports 
+    (user_id, title, description, crime_type, location, status, priority, assigned_officer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+
+  reports.forEach(r => insertReport.run(r));
+  insertReport.finalize();
+
+  // Seed case updates
+  const updates = [
+    [1, 2, 'PENDING', 'Report received and logged into system.'],
+    [1, 2, 'INVESTIGATING', 'Officer Kumar assigned. Visiting scene for evidence collection.'],
+    [1, 2, 'INVESTIGATING', 'CCTV footage obtained from market association. Reviewing suspects.'],
+    [2, 2, 'PENDING', 'Report filed. Awaiting officer assignment.'],
+    [2, 2, 'INVESTIGATING', 'Witness statements collected. Looking for CCTV coverage.'],
+    [3, 2, 'PENDING', 'Report filed by citizen.'],
+    [3, 2, 'RESOLVED', 'Suspects identified and fined. Park restored.'],
+    [4, 3, 'PENDING', 'Urgent report received.'],
+    [4, 3, 'INVESTIGATING', 'Officer Ravi assigned. Visiting location for assessment.'],
+    [5, 2, 'PENDING', 'Break-in reported.'],
+    [5, 2, 'INVESTIGATING', 'Forensic team visited. Fingerprints collected.'],
+    [5, 2, 'CLOSED', 'Case closed. Suspects arrested.'],
+    [6, 3, 'PENDING', 'Assault reported.'],
+    [6, 3, 'INVESTIGATING', 'Victim statement recorded. Looking for witnesses.'],
+    [6, 3, 'RESOLVED', 'Perpetrator identified and arrested.'],
+    [7, 2, 'PENDING', 'Fraud complaint received.'],
+    [7, 2, 'INVESTIGATING', 'Cyber cell investigating. Tracing email source.']
+  ];
+
+  const insertUpdate = db.prepare(`INSERT OR IGNORE INTO case_updates 
+    (report_id, officer_id, status, notes) VALUES (?, ?, ?, ?)`);
+
+  updates.forEach(u => insertUpdate.run(u));
+  insertUpdate.finalize();
+
+  // Seed suspects
+  const suspects = [
+    [1, 'Unknown', null, 'MALE', 'Male, approx 25 years, wearing black helmet', null, 'WANTED'],
+    [4, 'Ramesh K.', 35, 'MALE', 'Neighbor, history of domestic disputes', 'Anna Nagar, Karur', 'ARRESTED'],
+    [5, 'Gang of 3', null, null, 'Known burglars in the area', 'Karur District', 'ARRESTED'],
+    [6, 'Suresh P.', 22, 'MALE', 'College student, identified by witnesses', 'College Road, Karur', 'ARRESTED']
+  ];
+
+  const insertSuspect = db.prepare(`INSERT OR IGNORE INTO suspects 
+    (report_id, name, age, gender, description, address, status) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+
+  suspects.forEach(s => insertSuspect.run(s));
+  insertSuspect.finalize();
+
+  // Seed evidence
+  const evidence = [
+    [1, 'cctv_footage.mp4', '/uploads/cctv_footage.mp4', 'video', 'CCTV footage from market entrance', 2],
+    [1, 'bike_photo.jpg', '/uploads/bike_photo.jpg', 'image', 'Photo of stolen bicycle', 4],
+    [3, 'park_damage.jpg', '/uploads/park_damage.jpg', 'image', 'Photo of damaged benches', 4],
+    [5, 'shop_entry.jpg', '/uploads/shop_entry.jpg', 'image', 'Photo of broken lock', 2],
+    [6, 'witness_statement.pdf', '/uploads/witness_statement.pdf', 'pdf', 'Signed witness statement', 3]
+  ];
+
+  const insertEvidence = db.prepare(`INSERT OR IGNORE INTO evidence 
+    (report_id, file_name, file_path, file_type, description, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)`);
+
+  evidence.forEach(e => insertEvidence.run(e));
+  insertEvidence.finalize();
+
+  // Seed notifications
+  const notifications = [
+    [4, 'Case #1024 status updated to "Investigating"', 'STATUS_UPDATE'],
+    [4, 'Officer Kumar assigned to your report #1024', 'ASSIGNMENT'],
+    [4, 'Welcome to Crime Report MS!', 'GENERAL'],
+    [5, 'Case #1021 status updated to "Investigating"', 'STATUS_UPDATE'],
+    [5, 'Officer Ravi assigned to your report #1021', 'ASSIGNMENT']
+  ];
+
+  const insertNotif = db.prepare(`INSERT OR IGNORE INTO notifications 
+    (user_id, message, type) VALUES (?, ?, ?)`);
+
+  notifications.forEach(n => insertNotif.run(n));
+  insertNotif.finalize();
+
+  console.log('Database seeded successfully.');
+  console.log('\nDefault credentials:');
+  console.log('  Admin:    admin / admin123');
+  console.log('  Officer:  officer1 / officer123');
+  console.log('  Citizen:  john_doe / citizen123');
+}
+
+module.exports = db;
